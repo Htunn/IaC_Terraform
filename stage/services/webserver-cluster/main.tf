@@ -6,12 +6,8 @@ resource "aws_launch_configuration" "example" {
     image_id = "ami-0c20b8b385217763f"
     instance_type = "t2.micro"
     security_groups = [aws_security_group.instance.id]
+    user_data = data.template_file.user_data.rendered
 
-    user_data = <<-EOF
-                #!/bin/bash
-                    echo "Hello, World" > index.html
-                    nohup busybox httpd -f -p ${var.server_port} &
-                    EOF
 
     lifecycle {
       create_before_destroy = true
@@ -131,13 +127,36 @@ resource "aws_lb_target_group" "asg" {
     }
 }
 
-variable "server_port" {
-    description = "The port the server will use for HTTP requests"
-    type = number
-    default = 8080
+
+terraform {
+    backend "s3" {
+        # Replace this with your bucket name!
+        key = "stage/services/webserver-cluster/terraform.state"
+        bucket = "terraform-up-and-running-htunn"
+        region = "ap-southeast-1" 
+
+        # Replace this with your DynamoDB table name!
+        dynamodb_table = "terraform-up-and-running-locks"
+        encrypt = true
+    }
 }
 
-output "alb_dns_name" {
-    value = aws_lb.example.dns_name
-    description = "The domain name of the load balancer"
+data "terraform_remote_state" "db" {
+    backend = "s3"
+
+    config = {
+        bucket = "(terraform-up-and-running-htunn)"
+        key = "stage/data-stores/mysql/terraform.tfstate"
+        region = "ap-southeast-1"
+    }
+}
+
+data "template_file" "user_data" {
+    template = file("user-data.sh")
+
+    vars = {
+        server_port = var.server_port
+        db_address = data.terraform_remote_state.db.outputs.address 
+        db_port = data.terraform_remote_state.db.outputs.port 
+    }
 }

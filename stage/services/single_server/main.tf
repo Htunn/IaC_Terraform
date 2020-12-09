@@ -7,9 +7,11 @@ resource "aws_launch_configuration" "example" {
     instance_type = "t2.micro"
     security_groups = [aws_security_group.instance.id]
 
-    user_data = <<-EOF
+    user_data = <<EOF
                 #!/bin/bash
                     echo "Hello, World" > index.html
+                    echo "$(data.terraform_remote_state.db.outputs.address)" >> index.html
+                    echo "$(data.terraform_remote_state.db.outputs.port)" >> index.html
                     nohup busybox httpd -f -p ${var.server_port} &
                     EOF
 
@@ -131,13 +133,17 @@ resource "aws_lb_target_group" "asg" {
     }
 }
 
-variable "server_port" {
-    description = "The port the server will use for HTTP requests"
-    type = number
-    default = 8080
+terraform {
+    backend "s3" {
+        # Replace this with your bucket name
+        bucket = "terraform-up-and-running-htunn"
+        key = "stage/services/single_server/terraform.tfstate"
+        region = "ap-southeast-1"
+
+        # Replace this with your DynamoDB table name!
+        dynamodb_table = "terraform-up-and-running-locks"
+        encrypt = true
+    }
 }
 
-output "alb_dns_name" {
-    value = aws_lb.example.dns_name
-    description = "The domain name of the load balancer"
-}
+
