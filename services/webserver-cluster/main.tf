@@ -1,29 +1,61 @@
 resource "aws_launch_configuration" "example" {
-    image_id = "ami-0c20b8b385217763f"
+    image_id = var.ami
     instance_type = var.instance_type
     security_groups = [aws_security_group.instance.id]
-    user_data = data.template_file.user_data.rendered
 
+    user_data = (
+        length(data.template_file.user_data[*]) > 0
+        ? data.template_file.user_data[0].rendered
+        : data.template_file.user_data_new[0].rendered
+    )
 
+    # Required when using a launch configuration with an auto scaling group.
     lifecycle {
       create_before_destroy = true
     }
 }
 
 resource "aws_autoscaling_group" "example" {
-    launch_configuration = aws_launch_configuration.example.name
-  #  vpc_zone_identifier = data.aws_subnet_ids.default.ids
+    # Explicitly depend on the launch configuration's name so each time it's
+    # replaced, this ASG is also replaced
+    name = "${var.cluster_name}-${aws_launch_configuration.example.name}"
 
+    launch_configuration = aws_launch_configuration.example.name
+    vpc_zone_identifier = data.aws_subnet_ids.default.ids
     target_group_arns = [aws_lb_target_group.asg.arn]
     health_check_type = "ELB"
 
     min_size = var.min_size 
     max_size = var.max_size 
 
+    # wait for at least this many instances to pass health checks before
+    # considering the ASG deployment complete
+    min_elb_capacity = var.min_size
+
+    # When replacing this ASG, create the replacement first, and only delete the
+    # original after
+    lifecycle {
+        create_before_destroy =  true
+    }
+
     tag{
         key = "Name"
-        value = "${var.cluster_name}-example"
+        value = var.cluster_name
         propagate_at_launch = true
+    }
+    
+    dynamic "tag" {
+        for_each = {
+            for key, value in var.custom_tags:
+        key => upper(value)
+        if key != "Name"
+        }
+
+        content {
+            key     = tag.key
+            value   = tag.value
+            propagate_at_lunch = true
+        }
     }
 }
 
@@ -100,6 +132,7 @@ resource "aws_security_group_rule" "allow_http_inbound" {
     protocol = local.tcp_protocol 
     cidr_blocks = local.all_ips 
 }
+}
 
     # Allow all outbound requests
 resource "aws_security_group_rule" "allow_all_outbound" {
@@ -153,6 +186,8 @@ data "terraform_remote_state" "db" {
 }
 
 data "template_file" "user_data" {
+    count = var.enable_new_user_data ? 0 : 1
+
     template = file("${path.module}/user-data.sh")
 
     vars = {
@@ -162,11 +197,74 @@ data "template_file" "user_data" {
     }
 }
 
-locals {
-  http_port = 80
-  any_port = 0
-  any_protocol = "-1"
-  tcp_protocol = "tcp"
-  all_ips = ["0.0.0.0/0"]
+data "template_file" "user_data_new" {
+    count = var.enable_new_user_data ? 1: 0
+
+    template = file("${path.module}/user-data-new.sh")
+
+    vars = {
+        server_port = var.server_port
+    }
 }
+
+resource "aws_autoscaling_schedule" "scale_out_during_business_hours" {
+    count = var.enable_autoscaling ? 1 : 0
+
+    scheduled_action_name = "${var.cluster_name}-scale-out-during-business-hours"
+    min_size = 2
+    max_size = 10
+    desired_capacity = 10
+    recurrence = "0 9 * * *"
+    autoscaling_group_name = aws_autoscaling_group.example.name
+}
+
+resource "aws_autoscaling_schedule" "scale_in_at_night" {
+    count = var.enable_autoscaling ? 1 : 0
+
+    scheduled_action_name = "${var.cluster_name}-scale-in-at-night"
+    min_size = 2
+    max_size = 10
+    desired_capacity = 2
+    recurrence = "0 17 * * *"
+    autoscaling_group_name = aws_autoscaling_group.example.name
+}
+
+resource "aws_cloudwatch_metric_alarm" "high_cpu_utilization" {
+    alarm_name = "${var.cluster_name}-high-cpu-utilization"
+    namespace = "AWS/EC2"
+    metric_name = "CPUUtilization"
+
+    dimensions = {
+      "AutoScalingGroupName" = aws_autoscaling_group.example.name 
+    }
+
+    comparison_operator = "GreaterThanThreshold"
+    evaluation_periods = 1
+    period = 300
+    statistic = "Average"
+    threshold = 90
+    unit = "Percent"
+}
+
+resource "aws_cloudwatch_metric_alarm" "low_cpu_credit_balance" {
+    count = format("%.1s", var.instance_type) == "t" ? 1 : 0
+
+    alarm_name = "${var.cluster_name}-low-cpu-credit-balance"
+    namespace = "AWS/EC2"
+    metric_name = "CPUCreditBalance"
+
+    dimensions = {
+      AutoScalingGroupName = aws_autoscaling_group.example.name
+    }
+
+    comparison_operator = "LessThanThreshold"
+    evaluation_periods = 1
+    period  = 300
+    statistic = "Minimum" 
+    threshold = 10
+    unit = "Count"
+}
+
+
+
 

@@ -1,3 +1,15 @@
+variable "ami" {
+  description = "The AMI to run in the cluster"
+  default = "ami-0c20b8b385217763f"
+  type = string
+}
+
+variable "server_text" {
+  description = "The text the web server should return"
+  default = "Hello, World"
+  type = string
+}
+
 variable "server_port" {
     description = "The port the server will use for HTTP requests"
     type = number
@@ -50,4 +62,33 @@ variable "min_size" {
 variable "max_size" {
   description = "The maximum number of EC2 Instances in the ASG"
   type = number
+}
+
+variable "custom_tags" {
+    description = "Custom tags to set on the Instances in the ASG"
+    type = map(string)
+    default = {}
+}
+
+variable "enable_autoscaling" {
+    description = "If set to true, enable auto scaling" 
+    type = bool
+}
+
+variable "enable_new_user_data" {
+  description = "If set to true, use the new User Data Script" 
+  type = bool
+}
+
+variable "name" {
+  description = "A name to render" 
+  type = string
+}
+
+locals {
+    http_port = 80
+    any_port = 0
+    any_protocol = "-1"
+    tcp_protocol = "tcp"
+    all_ips = ["0.0.0.0/0"]
 }
