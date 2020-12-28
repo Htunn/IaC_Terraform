@@ -1,0 +1,10 @@
+digraph {
+	compound = "true"
+	newrank = "true"
+	subgraph "root" {
+		"[root] output.greeting" [label = "output.greeting", shape = "note"]
+		"[root] meta.count-boundary (EachMode fixup)" -> "[root] output.greeting"
+		"[root] root" -> "[root] meta.count-boundary (EachMode fixup)"
+	}
+}
+
